@@ -1,29 +1,27 @@
 from ttc_data_generator import SimulatedTTCTimeTimeNumpyQAging
 import matplotlib.pyplot as plt
-import numpy as np
 
-import matplotlib.pyplot as plt
 
 T = 100
-num_q_rings=5
+num_q_rings=2
 sim = SimulatedTTCTimeTimeNumpyQAging(
     T=T,
     dt=1.0,
     num_q_rings=num_q_rings,
     q_min=0.01,
     q_max=0.2,
-    D_sys_range=(0.3, 1.5),
-    gamma_scale_range=(1.5, 2.0),
-    beta_sys_range=(0.3, 0.9),
+    D_sys_range=(1.3, 1.3),
+    gamma_scale_range=(1.5, 1.6),
+    beta_sys_range=(0.8, 0.9),
     alpha_sys_range=(1.0, 1.0),
-    M_sys_range=(10, 80),
-    aging_rate_range=(0.05, 0.3),
-    aging_exp_range=(0.5, 1.5),
-    gamma_aging_rate_range=(0.0, 0.9),
+    M_sys_range=(1,3),
+    aging_rate_range=(0.05, 0.06),
+    aging_exp_range=(0.5, 0.6),
+    gamma_aging_rate_range=(0.0, 0.1),
     beta_aging_rate_range=(0.0, 0.2),
-    beta_aging_exp_range=(1.0, 2.0),
-    M_aging_rate_range=(0.0, 1.5),
-    M_aging_exp_range=(0.5, 1.5),
+    beta_aging_exp_range=(1.0, 1.1),
+    M_aging_rate_range=(0.0, 0.5),
+    M_aging_exp_range=(1.5, 1.5),
     seed=123
 )
 num_ages=5
