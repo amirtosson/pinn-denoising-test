@@ -7,9 +7,80 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers, Model
 import numpy as np
-import os 
-import datetime
+import os, json, datetime
+from contextlib import redirect_stdout
 
+def _ensure_dir(path: str):
+    os.makedirs(path, exist_ok=True)
+
+def export_model_summary(model, filepath: str):
+    _ensure_dir(os.path.dirname(filepath))
+    with open(filepath, "w", encoding="utf-8") as f:
+        with redirect_stdout(f):
+            model.summary()
+
+def extract_architecture_details(model):
+    """
+    Returns a compact list of layer configs including kernel size/filters/strides.
+    Works best for Conv2D / Conv2DTranspose / Dense / Pooling layers etc.
+    """
+    details = []
+    for i, layer in enumerate(model.layers):
+        cfg = layer.get_config()
+        entry = {
+            "index": i,
+            "name": layer.name,
+            "class_name": layer.__class__.__name__,
+        }
+
+        # Common informative keys
+        for k in [
+            "filters", "kernel_size", "strides", "padding", "activation",
+            "units", "pool_size", "rate", "dilation_rate",
+            "use_bias", "groups"
+        ]:
+            if k in cfg:
+                entry[k] = cfg[k]
+
+        # input/output shapes if available
+        try:
+            entry["input_shape"] = layer.input_shape
+        except Exception:
+            pass
+        try:
+            entry["output_shape"] = layer.output_shape
+        except Exception:
+            pass
+
+        details.append(entry)
+    return details
+
+def extract_loss_config(loss_fn):
+    """
+    Extract the weights of your PhysicsInformedLoss object.
+    Assumes the loss object has attributes like lambda_recon etc.
+    """
+    cfg = {}
+
+    # Safe attribute extraction
+    for attr in [
+        "lambda_recon", "lambda_1tcf", "lambda_symmetry", "lambda_siegert",
+        "lambda_causality", "lambda_boundary", "lambda_smoothness",
+        "lambda_baseline", "lambda_contrast", "lambda_fft"
+    ]:
+        if hasattr(loss_fn, attr):
+            cfg[attr] = float(getattr(loss_fn, attr))
+
+    # FFT settings (optional)
+    for attr in ["fft_use_log", "fft_use_ttc_minus_one", "fft_r_min", "fft_r_max", "fft_eps"]:
+        if hasattr(loss_fn, attr):
+            val = getattr(loss_fn, attr)
+            cfg[attr] = float(val) if isinstance(val, (int, float)) else bool(val) if isinstance(val, bool) else val
+
+    # Which losses are active (weight > 0)
+    cfg["active_losses"] = [k for k, v in cfg.items() if k.startswith("lambda_") and v > 0]
+
+    return cfg
 
 # ============================================================
 # 1) Model: simple 2-level Conv + ConvTranspose autoencoder
@@ -165,28 +236,28 @@ class XPCS_PINN_Denoiser(Model):
         self.input_shape_ = input_shape
 
         # ---------- Encoder ----------
-        self.conv1 = layers.Conv2D(32, (3, 3), activation="relu", padding="same")
+        self.conv1 = layers.Conv2D(16, (5, 5), activation="relu", padding="same")
         #self.pool1 = layers.MaxPooling2D((2, 2), padding="same")   # 100 -> 50
 
         #self.conv2 = layers.Conv2D(64, (3, 3), activation="relu", padding="same")
         #self.pool2 = layers.MaxPooling2D((2, 2), padding="same")   # 50 -> 25
 
-        self.conv3 = layers.Conv2D(64, (3, 3), activation="relu", padding="same")
+        self.conv3 = layers.Conv2D(32, (5, 5), activation="relu", padding="same")
         #self.pool3 = layers.MaxPooling2D((2, 2), strides=1, padding="same")  # 25 -> 25
 
-        self.bottleneck_conv = layers.Conv2D(
-            64, (3, 3), activation="relu", padding="same"
-        )  # 25x25x512
+        #self.bottleneck_conv = layers.Conv2D(
+           # 32, (5, 5), activation="relu", padding="same"
+        #)  # 25x25x512
 
         # ---------- Decoder ----------
         # 25 -> 50
         
-        self.deconv1 = layers.Conv2DTranspose(
-            64, (3, 3), activation="relu", padding="same"
-        )
+        #self.deconv1 = layers.Conv2DTranspose(
+         #   64, (5, 5), activation="relu", padding="same"
+        #)
         # 50 -> 100
         self.deconv2 = layers.Conv2DTranspose(
-            32, (3, 3), activation="relu", padding="same"
+            32, (5, 5), activation="relu", padding="same"
         )
         # 100 -> 100
         self.deconv3 = layers.Conv2DTranspose(
@@ -208,7 +279,7 @@ class XPCS_PINN_Denoiser(Model):
         x = self.conv3(x)
         #x = self.pool3(x)
 
-        x = self.bottleneck_conv(x)
+        #x = self.bottleneck_conv(x)
 
         # Decoder
         #x = self.deconv1(x)
@@ -241,7 +312,13 @@ class PhysicsInformedLoss:
                  lambda_boundary=0.3,
                  lambda_smoothness=0.1, 
                  lambda_baseline=0.5, 
-                 lambda_contrast = 0.5):
+                 lambda_contrast = 0.5,
+                 lambda_fft=0.05,             
+                 fft_use_log=True,
+                 fft_use_ttc_minus_one=True,
+                 fft_r_min=0.05,
+                 fft_r_max=0.95,
+                 fft_eps=1e-8):
 
         self.lambda_recon = lambda_recon
         self.lambda_1tcf = lambda_1tcf
@@ -252,6 +329,32 @@ class PhysicsInformedLoss:
         self.lambda_smoothness = lambda_smoothness
         self.lambda_baseline = lambda_baseline
         self.lambda_contrast = lambda_contrast
+        self.lambda_fft = lambda_fft
+        self.fft_use_log = fft_use_log
+        self.fft_use_ttc_minus_one = fft_use_ttc_minus_one
+        self.fft_r_min = fft_r_min
+        self.fft_r_max = fft_r_max
+        self.fft_eps = fft_eps
+
+        self._fft_mask = None
+        self._fft_mask_T = None
+
+    def _get_fft_mask(self, T: int):
+        if self._fft_mask is not None and self._fft_mask_T == T:
+            return self._fft_mask
+    
+        y = tf.linspace(-1.0, 1.0, T)
+        x = tf.linspace(-1.0, 1.0, T)
+        yy, xx = tf.meshgrid(y, x, indexing="ij")
+        rr = tf.sqrt(xx**2 + yy**2) / tf.sqrt(2.0)
+    
+        mask = tf.cast((rr >= self.fft_r_min) & (rr <= self.fft_r_max), tf.float32)  # [T,T]
+        mask = tf.reshape(mask, (1, T, T))  # [1,T,T] float32
+    
+        self._fft_mask = mask
+        self._fft_mask_T = T
+        return mask
+
 
     # ---------- basic losses ----------
 
@@ -325,11 +428,24 @@ class PhysicsInformedLoss:
         tcf_pred = self.extract_1tcf(y_pred)
         return tf.reduce_mean(tf.square(tcf_true[:, 1:] - tcf_pred[:, 1:]))
 
-    def symmetry_loss(self, y_pred):
-        y = tf.squeeze(y_pred, axis=-1)
-        yT = tf.transpose(y, perm=[0, 2, 1])
-        return tf.reduce_mean(tf.square(y - yT))
+    def symmetry_loss(self, y_pred, band_width = 5):
+        y = tf.squeeze(y_pred, axis=-1)        # [B, T, T]
+        yT = tf.transpose(y, perm=[0, 2, 1])   # [B, T, T]
 
+        diff = y - yT                          # antisymmetric part
+
+        if band_width is not None:
+            # build band mask once per batch shape
+            T = tf.shape(y)[1]
+            mask_2d = tf.linalg.band_part(
+                tf.ones((T, T), dtype=tf.float32),
+                band_width, band_width
+            )                                  # [T, T]
+            mask = tf.expand_dims(mask_2d, 0)  # [1, T, T]
+            diff = diff * mask
+
+        return tf.reduce_mean(tf.square(diff))
+    
     def siegert_relation_loss(self, y_pred, beta=0.3):
         y = tf.squeeze(y_pred, axis=-1)  # [batch, H, W]
 
@@ -365,6 +481,44 @@ class PhysicsInformedLoss:
         g2 = self.extract_1tcf(y_pred)
         tail = g2[:, -10:]
         return tf.reduce_mean(tf.square(tail))
+    
+    def fft_loss(self, y_true, y_pred):
+        """
+        FFT loss comparing log-magnitude spectra of TTC.
+        This version is WARNING-FREE and numerically stable.
+        """
+    
+        yt = tf.squeeze(y_true, axis=-1)  # [B,T,T]
+        yp = tf.squeeze(y_pred, axis=-1)
+    
+        if self.fft_use_ttc_minus_one:
+            yt = yt - 1.0
+            yp = yp - 1.0
+    
+        # ---- FFT ----
+        Yt = tf.signal.fft2d(tf.cast(yt, tf.complex64))
+        Yp = tf.signal.fft2d(tf.cast(yp, tf.complex64))
+    
+        # ---- EXPLICIT magnitude extraction (real tensor) ----
+        Mt = tf.math.real(tf.abs(Yt))
+        Mp = tf.math.real(tf.abs(Yp))
+    
+        # ---- OPTIONAL but RECOMMENDED: stop gradients through FFT ----
+        Mt = tf.stop_gradient(Mt)
+        Mp = tf.stop_gradient(Mp)
+    
+        if self.fft_use_log:
+            Mt = tf.math.log1p(Mt + self.fft_eps)
+            Mp = tf.math.log1p(Mp + self.fft_eps)
+    
+        T = int(yt.shape[1])
+        mask = self._get_fft_mask(T)   # float32 [1,T,T]
+    
+        Mt = Mt * mask
+        Mp = Mp * mask
+    
+        return tf.reduce_mean(tf.square(Mp - Mt))
+
     # ---------- total ----------
 
     def total_loss(self, y_true, y_pred):
@@ -377,6 +531,7 @@ class PhysicsInformedLoss:
         loss_smooth = self.smoothness_loss(y_pred)
         loss_baseline  = self.baseline_one_loss(y_pred)
         loss_contrast = self.contrast_loss(y_true, y_pred)
+        loss_fft = self.fft_loss(y_true, y_pred)
         total = (
             self.lambda_recon * loss_recon +
             self.lambda_1tcf * loss_1tcf +
@@ -386,7 +541,8 @@ class PhysicsInformedLoss:
             self.lambda_boundary * loss_boundary +
             self.lambda_smoothness * loss_smooth +
             self.lambda_baseline  * loss_baseline +
-            self.lambda_contrast * loss_contrast
+            self.lambda_contrast * loss_contrast +
+            self.lambda_fft * loss_fft
         )
 
         return total, {
@@ -399,6 +555,7 @@ class PhysicsInformedLoss:
             "smoothness": loss_smooth,
             "baseline": loss_baseline, 
             "contrast": loss_contrast,
+            "fft": loss_fft
         }
 
 
@@ -411,11 +568,12 @@ class XPCSPINNTrainer:
     Training class for XPCS PINN with custom training loop
     """
 
-    def __init__(self, model, loss_fn, optimizer, checkpoint_dir="./checkpoints"):
+    def __init__(self, model, loss_fn, optimizer, checkpoint_dir="./checkpoints", run_name = "model"):
         self.model = model
         self.loss_fn = loss_fn
         self.optimizer = optimizer
         self.checkpoint_dir = checkpoint_dir
+        self.run_name = run_name
 
         self.train_loss_tracker = keras.metrics.Mean(name="train_loss")
         self.val_loss_tracker = keras.metrics.Mean(name="val_loss")
@@ -423,8 +581,42 @@ class XPCSPINNTrainer:
         self.loss_components_tracker = {
             name: keras.metrics.Mean(name=name)
             for name in ["reconstruction", "1tcf", "symmetry",
-                         "siegert", "causality", "boundary", "smoothness", "baseline", "contrast"]
+                         "siegert", "causality", "boundary", "smoothness", "baseline", "contrast", "fft"]
         }
+        self._save_run_config()
+
+    def _save_run_config(self):
+        """
+        Save a static run config once (model json + architecture details + loss config).
+        """
+        os.makedirs(self.checkpoint_dir, exist_ok=True)
+        run_cfg = {
+            "run_name": self.run_name,
+            "created_at": datetime.datetime.now().isoformat(),
+            "tensorflow_version": tf.__version__,
+            "keras_version": keras.__version__ if hasattr(keras, "__version__") else None,
+            "loss_config": extract_loss_config(self.loss_fn),
+            "architecture_details": extract_architecture_details(self.model),
+            "model_json": None,
+        }
+
+        # model.to_json() is serializable and useful for recreation
+        try:
+            run_cfg["model_json"] = self.model.to_json()
+        except Exception as e:
+            run_cfg["model_json"] = f"FAILED: {str(e)}"
+        
+        
+        
+        cfg_path = os.path.join(self.checkpoint_dir, "run_config.json")
+        
+        print(cfg_path)
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump(run_cfg, f, indent=2)
+
+        # Also store a readable summary
+        export_model_summary(self.model, os.path.join(self.checkpoint_dir, "model_summary.txt"))
+
 
     def train_step(self, noisy_2tcf, target_2tcf):
         with tf.GradientTape() as tape:
@@ -446,55 +638,147 @@ class XPCSPINNTrainer:
         total_loss, _ = self.loss_fn.total_loss(target_2tcf, denoised)
         self.val_loss_tracker.update_state(total_loss)
         return total_loss
+    
+    
+    def _save_checkpoint_bundle(self, epoch: int):
+        """
+        Save weights + metadata bundle including model json and loss config.
+        """
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        prefix = f"{self.run_name}_epoch_{epoch}_{ts}"
 
+        weights_path = os.path.join(self.checkpoint_dir, f"{prefix}.weights.h5")
+        model_json_path = os.path.join(self.checkpoint_dir, f"{prefix}.model.json")
+        meta_json_path = os.path.join(self.checkpoint_dir, f"{prefix}.meta.json")
+        summary_path = os.path.join(self.checkpoint_dir, f"{prefix}.summary.txt")
+
+        # 1) weights
+        self.model.save_weights(weights_path)
+
+        # 2) model architecture JSON
+        model_json_str = self.model.to_json()
+        with open(model_json_path, "w", encoding="utf-8") as f:
+            f.write(model_json_str)
+
+        # 3) metadata JSON (loss weights + architecture detail)
+        meta = {
+            "run_name": self.run_name,
+            "saved_at": datetime.datetime.now().isoformat(),
+            "epoch": int(epoch),
+            "loss_config": extract_loss_config(self.loss_fn),
+            "architecture_details": extract_architecture_details(self.model),
+            "train_loss": float(self.train_loss_tracker.result().numpy()),
+            "val_loss": float(self.val_loss_tracker.result().numpy()),
+            "loss_components_epoch": {k: float(v.result().numpy()) for k, v in self.loss_components_tracker.items()},
+            "weights_file": os.path.basename(weights_path),
+            "model_json_file": os.path.basename(model_json_path),
+        }
+
+        with open(meta_json_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2)
+
+        # 4) summary txt (snapshot)
+        export_model_summary(self.model, summary_path)
+
+        return weights_path, meta_json_path, model_json_path, summary_path
+    
+    
     def train(self, train_dataset, val_dataset, epochs, save_freq=10, verbose=1):
         history = {
             "train_loss": [],
             "val_loss": [],
             "loss_components": {k: [] for k in self.loss_components_tracker.keys()},
         }
-
+    
         for epoch in range(epochs):
             self.train_loss_tracker.reset_state()
             self.val_loss_tracker.reset_state()
             for tracker in self.loss_components_tracker.values():
                 tracker.reset_state()
-
+    
             # train
             for noisy, target in train_dataset:
                 self.train_step(noisy, target)
-
+    
             # val
             for noisy, target in val_dataset:
                 self.val_step(noisy, target)
-
-            train_loss = self.train_loss_tracker.result().numpy()
-            val_loss = self.val_loss_tracker.result().numpy()
+    
+            train_loss = float(self.train_loss_tracker.result().numpy())
+            val_loss = float(self.val_loss_tracker.result().numpy())
             history["train_loss"].append(train_loss)
             history["val_loss"].append(val_loss)
-
+    
             for k, tracker in self.loss_components_tracker.items():
-                history["loss_components"][k].append(tracker.result().numpy())
-
+                history["loss_components"][k].append(float(tracker.result().numpy()))
+    
             if verbose:
                 print(f"\nEpoch {epoch+1}/{epochs}")
-                print(f"Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
+                print(f"Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
                 print("Loss components:")
                 for k, tracker in self.loss_components_tracker.items():
-                    print(f"  {k}: {tracker.result():.4f}")
-
+                    print(f"  {k}: {tracker.result().numpy():.6f}")
+    
+            # save bundle
             if (epoch + 1) % save_freq == 0:
-                os.makedirs(self.checkpoint_dir, exist_ok=True)
-                ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                checkpoint_path = os.path.join(
-                    self.checkpoint_dir,
-                    f"epoch_{epoch+1}_{ts}.weights.h5"   # <-- important
-                )
-                self.model.save_weights(checkpoint_path)
+                w_path, meta_path, mj_path, sm_path = self._save_checkpoint_bundle(epoch + 1)
                 if verbose >= 1:
-                    print(f"Checkpoint saved: {checkpoint_path}")
-
+                    print(f"Checkpoint bundle saved in: {self.checkpoint_dir}")
+                    print(f"  weights: {w_path}")
+                    print(f"  meta:    {meta_path}")
+                    print(f"  model:   {mj_path}")
+                    print(f"  summary: {sm_path}")
+    
         return history
+
+    # def train(self, train_dataset, val_dataset, epochs, save_freq=10, verbose=1):
+    #     history = {
+    #         "train_loss": [],
+    #         "val_loss": [],
+    #         "loss_components": {k: [] for k in self.loss_components_tracker.keys()},
+    #     }
+
+    #     for epoch in range(epochs):
+    #         self.train_loss_tracker.reset_state()
+    #         self.val_loss_tracker.reset_state()
+    #         for tracker in self.loss_components_tracker.values():
+    #             tracker.reset_state()
+
+    #         # train
+    #         for noisy, target in train_dataset:
+    #             self.train_step(noisy, target)
+
+    #         # val
+    #         for noisy, target in val_dataset:
+    #             self.val_step(noisy, target)
+
+    #         train_loss = self.train_loss_tracker.result().numpy()
+    #         val_loss = self.val_loss_tracker.result().numpy()
+    #         history["train_loss"].append(train_loss)
+    #         history["val_loss"].append(val_loss)
+
+    #         for k, tracker in self.loss_components_tracker.items():
+    #             history["loss_components"][k].append(tracker.result().numpy())
+
+    #         if verbose:
+    #             print(f"\nEpoch {epoch+1}/{epochs}")
+    #             print(f"Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
+    #             print("Loss components:")
+    #             for k, tracker in self.loss_components_tracker.items():
+    #                 print(f"  {k}: {tracker.result():.4f}")
+
+    #         if (epoch + 1) % save_freq == 0:
+    #             os.makedirs(self.checkpoint_dir, exist_ok=True)
+    #             ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    #             checkpoint_path = os.path.join(
+    #                 self.checkpoint_dir,
+    #                 f"epoch_{epoch+1}_{ts}.weights.h5"   # <-- important
+    #             )
+    #             self.model.save_weights(checkpoint_path)
+    #             if verbose >= 1:
+    #                 print(f"Checkpoint saved: {checkpoint_path}")
+
+    #     return history
 
 
 # ============================================================
@@ -508,7 +792,10 @@ class XPCSDataPreprocessor:
 
     def __init__(self, target_size=100):
         self.target_size = target_size
-
+    def symmetrize_ttc(ttcf):
+        # ttcf: 2D numpy array [T,T]
+        return 0.5 * (ttcf + ttcf.T)
+    
     def normalize_2tcf(self, ttcf, contrast=None):
         ttcf = np.asarray(ttcf, dtype=np.float32)
         if contrast is None:
@@ -572,43 +859,46 @@ class XPCSDataPreprocessor:
         
         return ttcf + sym_noise
     
-    def add_noise_schaetzel(self, ttcf, n_frames, n_speckles=1, scale=5.0):
+    def add_noise_schaetzel(self,
+                        ttcf,
+                        n_frames,
+                        ns,
+                        diag_factor=1.5,
+                        tail_factor=0.7,
+                        base_scale=0.3):
         """
-        Add noise to a 2TCF using a Schätzel-like analysis.
-
-        Args:
-            ttcf       : clean 2TCF array [T, T] (g2 or C2)
-            n_frames   : number of time frames used to build TTCF
-            n_speckles : effective number of independent speckles / q-pixels
-            scale      : extra scaling factor to tune noise level
-
-        Returns:
-            noisy 2TCF with variance ~ 1 / sqrt( n_speckles * (N_frames - |Δt|) )
+        Schätzel-like noise with diagonal enhancement,
+        but same statistics along the whole diagonal.
+    
+        ttcf      : pure TTCF (normalized 0..1, baseline 0)
+        n_frames  : number of frames used in correlation
+        ns        : effective speckle count
+        diag_factor : relative noise amplitude at tau=0
+        tail_factor : relative noise amplitude at largest tau
         """
-        scale = np.random.randint(5, 60)
+    
         ttcf = np.asarray(ttcf, dtype=np.float32)
-        T = ttcf.shape[0]
+        N = ttcf.shape[0]
+    
+        # 1) base Gaussian noise
+        noise = np.random.normal(0.0, 1.0, ttcf.shape).astype(np.float32)
+    
+        # 2) build a scale matrix depending on lag = |i-j|
+        idx = np.arange(N, dtype=np.float32)
+        tau = np.abs(idx[:, None] - idx[None, :])   # tau[i,j] = |i-j|
+        tau_norm = tau / tau.max()                  # in [0,1]
+    
+        # largest amplitude at tau=0, smallest at tau_max
+        scale = diag_factor - (diag_factor - tail_factor) * tau_norm
+        # shape: [N, N], constant along each diagonal band
+    
+        noise *= scale
+    
+        # 3) Schätzel variance scaling ~ 1/sqrt(M * ns)
+        denom = np.sqrt(max(n_frames * ns, 1.0))
+        noise = base_scale * noise / denom
 
-        # build lag matrix τ = |t1 - t2|
-        t = np.arange(T, dtype=np.int32)
-        tt1, tt2 = np.meshgrid(t, t)
-        tau = np.abs(tt1 - tt2)  # [T, T]
-
-        # number of contributing pairs for each lag
-        # M_pairs(τ) = max(N_frames - τ, 1)
-        M_pairs = np.maximum(n_frames - tau, 1)
-
-        # total independent samples (pairs * speckles)
-        M_eff = np.maximum(M_pairs * n_speckles, 1)
-
-        # Schätzel-style σ ~ 1 / sqrt(M_eff)
-        sigma = scale / np.sqrt(M_eff).astype(np.float32)
-
-        # sample Gaussian noise with local σ
-        noise = np.random.normal(loc=0.0, scale=1.0, size=ttcf.shape).astype(np.float32)
-        noisy = ttcf + sigma * noise
-
-        return noisy
+        return ttcf + noise
 
     def estimate_ns_from_beta(self, ttcf):
         # beta ≈ std / mean near diagonal
@@ -633,7 +923,7 @@ class XPCSDataPreprocessor:
             x = self.normalize_2tcf(ttcf)
             x = self.replace_diagonal(x)
             x = self.resize_2tcf(x, self.target_size)
-
+            x = self.symmetrize_ttc(x) 
             target = x.astype(np.float32)
             for n in range(num_noise):
                 ns = self.estimate_ns_from_beta(target)
@@ -646,7 +936,7 @@ class XPCSDataPreprocessor:
         noisy_array = np.array(noisy_list, dtype=np.float32)[..., np.newaxis]
         target_array = np.array(target_list, dtype=np.float32)[..., np.newaxis]
         return noisy_array, target_array
-    def create_training_pairs_v2(self, ttcf_list, noise_level=0.1, num_noise=10):
+    def create_training_pairs_v2(self, ttcf_list, noise_level=0.1, num_noise=50):
         """
         Generate (noisy, target) training pairs from PURE normalized TTCFs.
         
@@ -675,11 +965,13 @@ class XPCSDataPreprocessor:
                 noisy = self.add_noise_schaetzel(
                     target, 
                     n_frames=100, 
-                    n_speckles=ns,
-                    scale= 5*n
+                    ns=ns,
+                    diag_factor= n,
+                    tail_factor= n,
+                    base_scale=n*0.5
                 )
     
-                noisy = self.add_noise(noisy, noise_level=(noise_level +(n*3.5)))
+                #noisy = self.add_noise(noisy, noise_level=(noise_level +(n*3.5)))
 
     
                 # -------------------------------

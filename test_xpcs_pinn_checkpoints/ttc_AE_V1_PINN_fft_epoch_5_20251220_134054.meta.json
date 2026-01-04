@@ -1,0 +1,159 @@
+{
+  "run_name": "ttc_AE_V1_PINN_fft",
+  "saved_at": "2025-12-20T13:40:54.385188",
+  "epoch": 5,
+  "loss_config": {
+    "lambda_recon": 5.0,
+    "lambda_1tcf": 0.0,
+    "lambda_symmetry": 5.3,
+    "lambda_siegert": 0.5,
+    "lambda_causality": 0.5,
+    "lambda_boundary": 0.3,
+    "lambda_smoothness": 0.05,
+    "lambda_baseline": 1.0,
+    "lambda_contrast": 1.0,
+    "lambda_fft": 1.0,
+    "fft_use_log": 1.0,
+    "fft_use_ttc_minus_one": 1.0,
+    "fft_r_min": 0.05,
+    "fft_r_max": 0.95,
+    "fft_eps": 1e-08,
+    "active_losses": [
+      "lambda_recon",
+      "lambda_symmetry",
+      "lambda_siegert",
+      "lambda_causality",
+      "lambda_boundary",
+      "lambda_smoothness",
+      "lambda_baseline",
+      "lambda_contrast",
+      "lambda_fft"
+    ]
+  },
+  "architecture_details": [
+    {
+      "index": 0,
+      "name": "conv2d_30",
+      "class_name": "Conv2D",
+      "filters": 16,
+      "kernel_size": [
+        5,
+        5
+      ],
+      "strides": [
+        1,
+        1
+      ],
+      "padding": "same",
+      "activation": "relu",
+      "dilation_rate": [
+        1,
+        1
+      ],
+      "use_bias": true,
+      "groups": 1
+    },
+    {
+      "index": 1,
+      "name": "conv2d_31",
+      "class_name": "Conv2D",
+      "filters": 32,
+      "kernel_size": [
+        5,
+        5
+      ],
+      "strides": [
+        1,
+        1
+      ],
+      "padding": "same",
+      "activation": "relu",
+      "dilation_rate": [
+        1,
+        1
+      ],
+      "use_bias": true,
+      "groups": 1
+    },
+    {
+      "index": 2,
+      "name": "conv2d_transpose_20",
+      "class_name": "Conv2DTranspose",
+      "filters": 32,
+      "kernel_size": [
+        5,
+        5
+      ],
+      "strides": [
+        1,
+        1
+      ],
+      "padding": "same",
+      "activation": "relu",
+      "dilation_rate": [
+        1,
+        1
+      ],
+      "use_bias": true
+    },
+    {
+      "index": 3,
+      "name": "conv2d_transpose_21",
+      "class_name": "Conv2DTranspose",
+      "filters": 16,
+      "kernel_size": [
+        3,
+        3
+      ],
+      "strides": [
+        1,
+        1
+      ],
+      "padding": "same",
+      "activation": "relu",
+      "dilation_rate": [
+        1,
+        1
+      ],
+      "use_bias": true
+    },
+    {
+      "index": 4,
+      "name": "conv2d_32",
+      "class_name": "Conv2D",
+      "filters": 1,
+      "kernel_size": [
+        3,
+        3
+      ],
+      "strides": [
+        1,
+        1
+      ],
+      "padding": "same",
+      "activation": "linear",
+      "dilation_rate": [
+        1,
+        1
+      ],
+      "use_bias": true,
+      "groups": 1
+    }
+  ],
+  "train_loss": 1.6506032943725586,
+  "val_loss": 1.634227991104126,
+  "loss_components_epoch": {
+    "reconstruction": 0.20470337569713593,
+    "1tcf": 0.14202024042606354,
+    "symmetry": 0.0005944962031207979,
+    "siegert": 0.40796369314193726,
+    "causality": 0.011575303971767426,
+    "boundary": 0.16660593450069427,
+    "smoothness": 0.002161997137591243,
+    "baseline": 0.04166026785969734,
+    "contrast": 0.13080576062202454,
+    "fft": 0.19161120057106018
+  },
+  "weights_file": "ttc_AE_V1_PINN_fft_epoch_5_20251220_134054.weights.h5",
+  "model_json_file": "ttc_AE_V1_PINN_fft_epoch_5_20251220_134054.model.json"
+}

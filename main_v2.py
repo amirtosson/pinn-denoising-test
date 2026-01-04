@@ -212,9 +212,9 @@ def main():
     # Settings
     # ---------------------------------------------
     t_bins = 100       # TTC size: 100 x 100
-    n_samples = 500    # number of synthetic TTCFs
+    n_samples = 1000   # number of synthetic TTCFs
     batch_size = 16
-    epochs = 5
+    epochs = 10
 
     # ---------------------------------------------
     # 2) Create synthetic training data
@@ -265,7 +265,7 @@ def main():
     # 6) Build model
     # ---------------------------------------------
     print("Building PINN model...")
-    model = XPCS_PINN_Denoiser(name='ttc_AE_V1')
+    model = XPCS_PINN_Denoiser(name='ttc_AE_V1_PINN_fft')
     #model = XPCS_PINN_Denoiser_V2(base_filters=32)
     # Build by calling once
     dummy_input = tf.random.normal([1, t_bins, t_bins, 1])
@@ -279,17 +279,22 @@ def main():
     # ---------------------------------------------
     loss_fn = PhysicsInformedLoss(
         lambda_recon=5.0,
-        lambda_1tcf=1.0,
-        lambda_symmetry=0.3,
+        lambda_1tcf=0.0,
+        lambda_symmetry=5.3,
         lambda_siegert=0.5,
         lambda_causality=0.5,
         lambda_boundary=0.3,
         lambda_smoothness=0.05,
         lambda_baseline=1.0,
-        lambda_contrast= 1.0
+        lambda_contrast= 1.0,
+        lambda_fft=1.0,          
+        fft_use_log=True,
+        fft_use_ttc_minus_one=True,
+        fft_r_min=0.05,
+        fft_r_max=0.95
     )
 
-    optimizer = keras.optimizers.Adam(learning_rate=1e-4)
+    optimizer = keras.optimizers.Adam(learning_rate=1e-5)
 
     # ---------------------------------------------
     # 8) Trainer
@@ -298,7 +303,8 @@ def main():
         model=model,
         loss_fn=loss_fn,
         optimizer=optimizer,
-        checkpoint_dir="./xpcs_pinn_checkpoints",
+        checkpoint_dir="./test_xpcs_pinn_checkpoints",
+        run_name='ttc_AE_V1_PINN_fft'
     )
 
     # ---------------------------------------------
@@ -329,8 +335,8 @@ def main():
     plt.grid(True)
 
     # individual components
-    components = ["reconstruction", "1tcf", "symmetry",
-                 "siegert", "causality", "boundary", "smoothness", "baseline", "contrast"]
+    components = ["reconstruction", "1tcf", "symmetry","causality", "boundary", "smoothness", "baseline", "contrast"]
+                # "siegert", 
     for idx, component in enumerate(components):
         plt.subplot(3, 3, idx + 2)
         plt.plot(history["loss_components"][component])

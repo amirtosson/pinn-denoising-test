@@ -1,0 +1,1 @@
+{"module": "ttc_ai_v2", "class_name": "XPCS_PINN_Denoiser", "config": {"name": "ttc_AE_V1_PINN_fft", "input_shape": [100, 100, 1], "trainable": true, "dtype": {"module": "keras", "class_name": "DTypePolicy", "config": {"name": "float32"}, "registered_name": null}}, "registered_name": "XPCS_PINN_Denoiser", "build_config": {"input_shape": [1, 100, 100, 1]}, "compile_config": {}}
