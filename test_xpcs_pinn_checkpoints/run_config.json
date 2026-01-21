@@ -1,30 +1,29 @@
 {
   "run_name": "ttc_AE_V1_PINN_fft",
-  "created_at": "2025-12-20T09:48:46.706916",
-  "tensorflow_version": "2.17.0",
-  "keras_version": "3.12.0",
+  "created_at": "2026-01-21T17:00:59.343235",
+  "tensorflow_version": "2.13.1",
+  "keras_version": null,
   "loss_config": {
-    "lambda_recon": 5.0,
+    "lambda_recon": 3.0,
     "lambda_1tcf": 0.0,
-    "lambda_symmetry": 5.3,
-    "lambda_siegert": 0.5,
-    "lambda_causality": 0.5,
-    "lambda_boundary": 0.3,
+    "lambda_symmetry": 3.0,
+    "lambda_siegert": 0.3,
+    "lambda_causality": 0.2,
+    "lambda_boundary": 0.0,
     "lambda_smoothness": 0.05,
-    "lambda_baseline": 1.0,
-    "lambda_contrast": 1.0,
-    "lambda_fft": 1.0,
+    "lambda_baseline": 0.5,
+    "lambda_contrast": 0.5,
+    "lambda_fft": 0.3,
     "fft_use_log": 1.0,
     "fft_use_ttc_minus_one": 1.0,
-    "fft_r_min": 0.05,
-    "fft_r_max": 0.95,
+    "fft_r_min": 0.08,
+    "fft_r_max": 0.85,
     "fft_eps": 1e-08,
     "active_losses": [
       "lambda_recon",
       "lambda_symmetry",
       "lambda_siegert",
       "lambda_causality",
-      "lambda_boundary",
       "lambda_smoothness",
       "lambda_baseline",
       "lambda_contrast",
@@ -34,12 +33,32 @@
   "architecture_details": [
     {
       "index": 0,
-      "name": "conv2d_30",
+      "name": "pad10",
+      "class_name": "ZeroPadding2D",
+      "padding": [
+        [
+          10,
+          10
+        ],
+        [
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "index": 1,
+      "name": "crop_back",
+      "class_name": "CenterCrop"
+    },
+    {
+      "index": 2,
+      "name": "conv2d",
       "class_name": "Conv2D",
       "filters": 16,
       "kernel_size": [
-        5,
-        5
+        3,
+        7
       ],
       "strides": [
         1,
@@ -55,8 +74,30 @@
       "groups": 1
     },
     {
-      "index": 1,
-      "name": "conv2d_31",
+      "index": 3,
+      "name": "conv2d_1",
+      "class_name": "Conv2D",
+      "filters": 32,
+      "kernel_size": [
+        7,
+        3
+      ],
+      "strides": [
+        1,
+        1
+      ],
+      "padding": "same",
+      "activation": "relu",
+      "dilation_rate": [
+        1,
+        1
+      ],
+      "use_bias": true,
+      "groups": 1
+    },
+    {
+      "index": 4,
+      "name": "conv2d_2",
       "class_name": "Conv2D",
       "filters": 32,
       "kernel_size": [
@@ -77,8 +118,8 @@
       "groups": 1
     },
     {
-      "index": 2,
-      "name": "conv2d_transpose_20",
+      "index": 5,
+      "name": "conv2d_transpose",
       "class_name": "Conv2DTranspose",
       "filters": 32,
       "kernel_size": [
@@ -95,11 +136,12 @@
         1,
         1
       ],
-      "use_bias": true
+      "use_bias": true,
+      "groups": 1
     },
     {
-      "index": 3,
-      "name": "conv2d_transpose_21",
+      "index": 6,
+      "name": "conv2d_transpose_1",
       "class_name": "Conv2DTranspose",
       "filters": 16,
       "kernel_size": [
@@ -116,11 +158,12 @@
         1,
         1
       ],
-      "use_bias": true
+      "use_bias": true,
+      "groups": 1
     },
     {
-      "index": 4,
-      "name": "conv2d_32",
+      "index": 7,
+      "name": "conv2d_3",
       "class_name": "Conv2D",
       "filters": 1,
       "kernel_size": [
@@ -141,5 +184,5 @@
       "groups": 1
     }
   ],
-  "model_json": "{\"module\": \"ttc_ai_v2\", \"class_name\": \"XPCS_PINN_Denoiser\", \"config\": {\"name\": \"ttc_AE_V1_PINN_fft\", \"input_shape\": [100, 100, 1], \"trainable\": true, \"dtype\": {\"module\": \"keras\", \"class_name\": \"DTypePolicy\", \"config\": {\"name\": \"float32\"}, \"registered_name\": null}}, \"registered_name\": \"XPCS_PINN_Denoiser\", \"build_config\": {\"input_shape\": [1, 100, 100, 1]}, \"compile_config\": {}}"
+  "model_json": "{\"class_name\": \"XPCS_PINN_Denoiser\", \"config\": {\"name\": \"ttc_AE_V2_PINN_fft\"}, \"keras_version\": \"2.13.1\", \"backend\": \"tensorflow\"}"
 }

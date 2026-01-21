@@ -2,7 +2,7 @@
 """
 Simple training script for XPCS PINN denoiser on synthetic 2TCF data.
 """
-
+#%%
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
@@ -23,102 +23,54 @@ from ttc_ai_v2 import (
 # 1) Synthetic XPCS-like 2TCF generator
 # -------------------------------------------------
 
-def create_pure_synthetic_xpcs_v2(n_samples=100, size=100):
+def create_pure_synthetic_xpcs_signal(
+    n_samples=100,
+    size=100,
+    gamma_range=(0.001, 0.08),
+    alpha_range=(0.6, 1.2),
+    beta_range=(0.02, 0.4),
+    return_params=True,
+    seed=None,
+):
     """
-    Generate PURE (noise-free) synthetic TTCFs for XPCS, normalized 0→1.
+    PURE synthetic XPCS two-time correlation in SIGNAL domain:
+        S(tau) = (g2(tau) - 1)/beta = exp(-2*(gamma*tau)^alpha)
 
-    g2_norm(tau) = exp( -2 * (gamma * tau)^alpha )
-
-    Args:
-        n_samples : number of TTCFs to generate
-        size      : TTCF dimension (size x size)
+    Output:
+        S in [0,1], baseline=0, peak=1, symmetric [size,size].
 
     Returns:
-        pure_list : list of pure TTCFs each [size, size], baseline=0, peak=1
+        S_list: list of [size,size] float32
+        params: list of dicts (gamma, alpha, beta) if return_params=True
     """
+    rng = np.random.default_rng(seed)
 
-    pure_list = []
-
-    # Time-grid
-    t = np.arange(size)
-    tt1, tt2 = np.meshgrid(t, t)
+    # Time grid (tau = |t1 - t2|)
+    t = np.arange(size, dtype=np.float32)
+    tt1, tt2 = np.meshgrid(t, t, indexing="ij")
     tau = np.abs(tt1 - tt2).astype(np.float32)
 
-    for _ in range(n_samples):
-
-        # ---- Physical parameters ----
-        gamma = np.random.uniform(0.01, 0.08)    # decay rate
-        alpha = np.random.uniform(0.8, 1.2)      # stretching exponent
-        beta  = np.random.uniform(0.2, 0.4)      # speckle contrast
-
-        # ---- Raw g2 ----
-        g2 = 1.0 + beta * np.exp(-2.0 * (gamma * tau)**alpha)
-
-        # ---- Normalize to 0→1 ----
-        # baseline = 1
-        # peak    = 1 + beta
-        g2_norm = (g2 - 1.0) / beta          # now baseline=0, peak=1
-        g2_norm = g2_norm.astype(np.float32)
-
-        pure_list.append(g2_norm)
-
-    return pure_list
-
-
-
-
-# pure_list = create_pure_synthetic_xpcs_v2(n_samples=10, size=100)
-
-# def plot_pure_ttcfs(pure_list, n_show=3):
-#     plt.figure(figsize=(12, 4))
-
-#     for i in range(n_show):
-#         plt.subplot(1, n_show, i+1)
-#         plt.imshow(pure_list[i], cmap='viridis')
-#         plt.title(f"Pure TTCF #{i+1}")
-#         plt.colorbar()
-#         plt.axis('off')
-
-#     plt.tight_layout()
-#     plt.show()
-    
-# plot_pure_ttcfs(pure_list)
-
-
-
-
-def create_synthetic_xpcs_data(n_samples=100, size=100, noise_std=0.05):
-    """
-    Create synthetic XPCS 2TCF data with stretched exponential decay.
-
-    Args:
-        n_samples: number of TTCF maps to generate
-        size: time bins (T x T)
-        noise_std: standard deviation of additive Gaussian noise
-
-    Returns:
-        list of 2D numpy arrays [size, size]
-    """
-    data = []
-    t = np.arange(size)
-    tt1, tt2 = np.meshgrid(t, t)
-    tau = np.abs(tt1 - tt2)
+    S_list = []
+    params = []
 
     for _ in range(n_samples):
-        # random dynamic parameters
-        gamma = np.random.uniform(0.01, 0.1)
-        alpha = np.random.uniform(0.8, 1.2)
-        beta = np.random.uniform(0.2, 0.4)
+        gamma = float(rng.uniform(*gamma_range))
+        alpha = float(rng.uniform(*alpha_range))
+        beta  = float(rng.uniform(*beta_range))
 
-        # stretched exponential correlation
-        corr = 1.0 + beta * np.exp(-2.0 * (gamma * tau) ** alpha)
+        S = np.exp(-2.0 * (gamma * tau) ** alpha).astype(np.float32)
 
-        # add noise
-        #corr += np.random.normal(0.0, noise_std, corr.shape).astype(np.float32)
+        # enforce symmetry explicitly (numerically safe)
+        S = 0.5 * (S + S.T)
 
-        data.append(corr.astype(np.float32))
+        S_list.append(S)
 
-    return data
+        if return_params:
+            params.append({"gamma": gamma, "alpha": alpha, "beta": beta})
+
+    return (S_list, params) if return_params else S_list
+
+
 def interactive_preview(noisy_data, target_data, cmap="viridis"):
     """
     Interactive loop to inspect noisy vs pure TTCF before training.
@@ -212,7 +164,7 @@ def main():
     # Settings
     # ---------------------------------------------
     t_bins = 100       # TTC size: 100 x 100
-    n_samples = 1000   # number of synthetic TTCFs
+    n_samples = 10   # number of synthetic TTCFs
     batch_size = 16
     epochs = 10
 
@@ -221,7 +173,7 @@ def main():
     # ---------------------------------------------n
     
     print("Creating synthetic XPCS data...")
-    ttcf_list = create_pure_synthetic_xpcs_v2(
+    ttcf_list, _para= create_pure_synthetic_xpcs_signal(
         n_samples=n_samples,
         size=t_bins
     )
@@ -232,14 +184,17 @@ def main():
     print("Preprocessing data...")
     preprocessor = XPCSDataPreprocessor(target_size=t_bins)
 
-    noisy_data, target_data = preprocessor.create_training_pairs_v2(
+    noisy_data, target_data= preprocessor.create_training_pairs_v2(
         ttcf_list,
-        noise_level=0.60,  # extra noise level for training pairs
+        noise_level=0.60,
+        #add_extra_gauss=False# extra noise level for training pairs
     )
     
     print(f"Training data shape (noisy):  {noisy_data.shape}")
     print(f"Training data shape (target): {target_data.shape}")
     interactive_preview(noisy_data, target_data)
+
+
     # ---------------------------------------------
     # 4) Train/val splitn
     # ---------------------------------------------
@@ -265,7 +220,7 @@ def main():
     # 6) Build model
     # ---------------------------------------------
     print("Building PINN model...")
-    model = XPCS_PINN_Denoiser(name='ttc_AE_V1_PINN_fft')
+    model = XPCS_PINN_Denoiser(name='ttc_AE_V2_PINN_fft')
     #model = XPCS_PINN_Denoiser_V2(base_filters=32)
     # Build by calling once
     dummy_input = tf.random.normal([1, t_bins, t_bins, 1])
@@ -278,20 +233,20 @@ def main():
     # 7) Loss + optimizer
     # ---------------------------------------------
     loss_fn = PhysicsInformedLoss(
-        lambda_recon=5.0,
+        lambda_recon=3.0,
         lambda_1tcf=0.0,
-        lambda_symmetry=5.3,
-        lambda_siegert=0.5,
-        lambda_causality=0.5,
-        lambda_boundary=0.3,
+        lambda_symmetry=3.0,
+        lambda_siegert=0.3,
+        lambda_causality=0.2,
+        lambda_boundary=0.0,
         lambda_smoothness=0.05,
-        lambda_baseline=1.0,
-        lambda_contrast= 1.0,
-        lambda_fft=1.0,          
+        lambda_baseline=0.5,
+        lambda_contrast= 0.5,
+        lambda_fft=0.3,          
         fft_use_log=True,
         fft_use_ttc_minus_one=True,
-        fft_r_min=0.05,
-        fft_r_max=0.95
+        fft_r_min=0.08,
+        fft_r_max=0.85
     )
 
     optimizer = keras.optimizers.Adam(learning_rate=1e-5)

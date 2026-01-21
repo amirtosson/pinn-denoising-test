@@ -231,63 +231,34 @@ class XPCS_PINN_Denoiser(Model):
     - Decoder: 2 Conv2DTranspose blocks, output 100x100x1
     """
 
-    def __init__(self, input_shape=(100, 100, 1), name="ttc_autoencoder"):
+    def __init__(self, input_shape=(100, 100, 1),pad = 10,  name="ttc_autoencoder"):
         super().__init__(name=name)
         self.input_shape_ = input_shape
+        self.padded_size = input_shape[0] + 2 * pad  # 100 + 20 = 120
+
+        # --- padding + cropping ---
+        self.zero_pad = layers.ZeroPadding2D(padding=pad, name="pad10")
+        self.center_crop = layers.CenterCrop(input_shape[0], input_shape[1], name="crop_back")
 
         # ---------- Encoder ----------
-        self.conv1 = layers.Conv2D(16, (5, 5), activation="relu", padding="same")
-        #self.pool1 = layers.MaxPooling2D((2, 2), padding="same")   # 100 -> 50
-
-        #self.conv2 = layers.Conv2D(64, (3, 3), activation="relu", padding="same")
-        #self.pool2 = layers.MaxPooling2D((2, 2), padding="same")   # 50 -> 25
-
-        self.conv3 = layers.Conv2D(32, (5, 5), activation="relu", padding="same")
-        #self.pool3 = layers.MaxPooling2D((2, 2), strides=1, padding="same")  # 25 -> 25
-
-        #self.bottleneck_conv = layers.Conv2D(
-           # 32, (5, 5), activation="relu", padding="same"
-        #)  # 25x25x512
-
-        # ---------- Decoder ----------
-        # 25 -> 50
-        
-        #self.deconv1 = layers.Conv2DTranspose(
-         #   64, (5, 5), activation="relu", padding="same"
-        #)
-        # 50 -> 100
-        self.deconv2 = layers.Conv2DTranspose(
-            32, (5, 5), activation="relu", padding="same"
-        )
-        # 100 -> 100
-        self.deconv3 = layers.Conv2DTranspose(
-            16, (3, 3), activation="relu", padding="same"
-        )
-
-        self.out_conv = layers.Conv2D(
-            1, (3, 3), activation="linear", padding="same"
-        )
+        self.conv1 = layers.Conv2D(16, (3, 7), activation="relu", padding="same")
+        self.conv3 = layers.Conv2D(32, (7, 3), activation="relu", padding="same")
+        self.conv4 = layers.Conv2D(32, (5, 5), activation="relu", padding="same")
+        self.deconv2 = layers.Conv2DTranspose( 32, (5, 5), activation="relu", padding="same")
+        self.deconv3 = layers.Conv2DTranspose( 16, (3, 3), activation="relu", padding="same")
+        self.out_conv = layers.Conv2D( 1, (3, 3), activation="linear", padding="same")
 
     def call(self, inputs, training=False):
         # Encoder
-        x = self.conv1(inputs)
-        #x = self.pool1(x)
-
-        #x = self.conv2(x)
-        #x = self.pool2(x)
-
+        x = self.zero_pad(inputs)
+        x = self.conv1(x)
         x = self.conv3(x)
-        #x = self.pool3(x)
-
-        #x = self.bottleneck_conv(x)
-
-        # Decoder
-        #x = self.deconv1(x)
+        x = self.conv4(x)
         x = self.deconv2(x)
         x = self.deconv3(x)
-
-        outputs = self.out_conv(x)
-        return outputs
+        x = self.out_conv(x)
+        x = self.center_crop(x)
+        return x
 
     def build_graph(self):
         # helper to print summary
@@ -792,7 +763,7 @@ class XPCSDataPreprocessor:
 
     def __init__(self, target_size=100):
         self.target_size = target_size
-    def symmetrize_ttc(ttcf):
+    def symmetrize_ttc(self, ttcf):
         # ttcf: 2D numpy array [T,T]
         return 0.5 * (ttcf + ttcf.T)
     
@@ -936,6 +907,7 @@ class XPCSDataPreprocessor:
         noisy_array = np.array(noisy_list, dtype=np.float32)[..., np.newaxis]
         target_array = np.array(target_list, dtype=np.float32)[..., np.newaxis]
         return noisy_array, target_array
+    
     def create_training_pairs_v2(self, ttcf_list, noise_level=0.1, num_noise=50):
         """
         Generate (noisy, target) training pairs from PURE normalized TTCFs.
@@ -957,39 +929,20 @@ class XPCSDataPreprocessor:
             target = ttcf.astype(np.float32)
     
             for n in range(num_noise):
-    
+                n_frames = int(np.random.randint(100, 500 + 1))
+
                 # ----- 1) Estimate number of speckles (Schätzel parameter) -----
                 ns = self.estimate_ns_from_beta(target)
     
                 # ----- 2) Add Schätzel noise (diagonal) -----
                 noisy = self.add_noise_schaetzel(
                     target, 
-                    n_frames=100, 
+                    n_frames=n_frames, 
                     ns=ns,
                     diag_factor= n,
                     tail_factor= n,
                     base_scale=n*0.5
                 )
-    
-                #noisy = self.add_noise(noisy, noise_level=(noise_level +(n*3.5)))
-
-    
-                # -------------------------------
-                # 🔥 5) Re-normalize noisy TTCF back to 0..1
-                # -------------------------------
-                # new_peak   ~ max value near diagonal
-                # new_base   ~ average of tail region
-                # ensures noisy is ALWAYS in [0..1]
-                # -------------------------------
-                peak = np.percentile(noisy[:5, :5], 95)       # near-diagonal
-                base = np.mean(noisy[-10:, -10:])             # long-time tail
-    
-                noisy = (noisy - base) / max(peak - base, 1e-6)
-    
-                # Clip to valid range
-                noisy = np.clip(noisy, 0.0, 1.0).astype(np.float32)
-    
-                # Store
                 noisy_list.append(noisy)
                 target_list.append(target)
     

@@ -346,3 +346,77 @@ class SimulatedTTCTimeTimeNumpyQAging:
 
     def get_q_values(self):
         return self.q_values.copy()
+    
+class XPCSSyntheticGenerator_V2:
+    def __init__(self, size=100, seed=0):
+        self.size = size
+        self.rng = np.random.default_rng(seed)
+
+        t = np.arange(size, dtype=np.float32)
+        t1, t2 = np.meshgrid(t, t)
+        self.tau = np.abs(t1 - t2).astype(np.float32)
+
+    @staticmethod
+    def symmetrize(A):
+        return 0.5 * (A + A.T)
+
+    def make_pure_signal(self, gamma, alpha):
+        # S = exp(-2 (gamma*tau)^alpha)  in [0,1]
+        S = np.exp(-2.0 * (gamma * self.tau) ** alpha).astype(np.float32)
+        return self.symmetrize(S)
+
+    def schaetzel_like_noise(self, n_frames, ns, diag_factor=1.5, tail_factor=0.7, base_scale=0.3):
+        N = self.size
+        noise = self.rng.normal(0.0, 1.0, (N, N)).astype(np.float32)
+        noise = self.symmetrize(noise)
+
+        idx = np.arange(N, dtype=np.float32)
+        tau = np.abs(idx[:, None] - idx[None, :])
+        tau_norm = tau / max(tau.max(), 1.0)
+
+        scale = diag_factor - (diag_factor - tail_factor) * tau_norm  # constant per diagonal band
+        noise *= scale
+
+        denom = np.sqrt(max(n_frames * ns, 1.0))
+        noise = base_scale * noise / denom
+        return noise.astype(np.float32)
+
+    def sample_params(self):
+        gamma = self.rng.uniform(0.01, 0.10)
+        alpha = self.rng.uniform(0.5, 1.3)
+        beta  = self.rng.uniform(0.02, 0.15)   # realistic XPCS contrast range (adjust)
+        n_frames = int(self.rng.integers(200, 3000))  # averaging / frames
+        ns = int(self.rng.integers(50, 2000))         # speckles
+        base_scale = self.rng.uniform(0.2, 1.0)
+        diag_factor = self.rng.uniform(1.2, 2.5)
+        tail_factor = self.rng.uniform(0.4, 1.2)
+        return gamma, alpha, beta, n_frames, ns, base_scale, diag_factor, tail_factor
+
+    def generate(self, n_samples=1000):
+        X = np.empty((n_samples, self.size, self.size, 1), dtype=np.float32)
+        Y = np.empty((n_samples, self.size, self.size, 1), dtype=np.float32)
+        meta = []
+
+        for i in range(n_samples):
+            gamma, alpha, beta, n_frames, ns, base_scale, diag_factor, tail_factor = self.sample_params()
+
+            S_pure = self.make_pure_signal(gamma, alpha)               # target in [0,1]
+            noise  = self.schaetzel_like_noise(n_frames, ns, diag_factor, tail_factor, base_scale)
+
+            S_noisy = S_pure + noise                                   # can be negative ✅
+
+            X[i, :, :, 0] = S_noisy
+            Y[i, :, :, 0] = S_pure
+
+            meta.append({
+                "gamma": float(gamma),
+                "alpha": float(alpha),
+                "beta":  float(beta),
+                "n_frames": int(n_frames),
+                "ns": int(ns),
+                "base_scale": float(base_scale),
+                "diag_factor": float(diag_factor),
+                "tail_factor": float(tail_factor),
+            })
+
+        return X, Y, meta
