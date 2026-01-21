@@ -284,6 +284,7 @@ class TTCAnalyzer:
         t_w = t_delay * (section_edges[:-1] + section_edges[1:]) / 2.0
         return tdelay_section, dtdelay_section, g2_cuts, g2_cuts_err, t_w
     
+    @staticmethod
     def g2_model(x, beta, A, tau, kww): 
         """exponential function for fitting the g2 [contrast, baseline, time constant, kww exponent]"""
         return A + beta*np.exp( -2*(x/tau)**kww )
@@ -313,8 +314,8 @@ class TTCAnalyzer:
         message : str
         """
         
-        g2 = np.asarray(g2, dtype=float)
-        tau = np.asarray(tau, dtype=float)
+        #g2 = np.asarray(g2, dtype=float)
+        #tau = np.asarray(tau, dtype=float)
 
         if sigma is None:
             sigma = np.ones_like(g2, dtype=float)
@@ -387,7 +388,7 @@ class TTCAnalyzer:
         p0=None,
         bound_lower=None,
         bound_higher=None,
-        fit_all_slices: bool = True,
+        fit_all_slices: bool = False,
         ):
         """
         Full pipeline:
@@ -397,6 +398,7 @@ class TTCAnalyzer:
 
         Returns a dict for clarity (recommended for pipelines).
         """
+        # normalize ttc
         
         # --- Step 1: extract g2 sections ---
         tdelay_section, dtdelay_section, g2_cuts, g2_cuts_err, t_w = self.g2_section_area(
@@ -428,18 +430,20 @@ class TTCAnalyzer:
         # --- Step 2: fit each slice ---
         for i in slices_to_fit:
             g2_i = g2_cuts[i]
+            #normalize to baseline=1
+            g2_i = (g2_i - np.nanmin(g2_i)) / (np.nanmax(g2_i) - np.nanmin(g2_i))
             tau_i = tdelay_section[i]      # µs (based on your earlier conversion)
             sig_i = g2_cuts_err[i]
 
             g2_fit_i, popt, perr, mask, ok, msg = self.g2_fitting(
                 g2=g2_i,
-                tau_axis=tau_i,
+                tau=tau_i,
                 sigma=sig_i,
                 p0=p0,
                 bound_lower=bound_lower,
                 bound_higher=bound_higher,
             )
-
+            
             fitted_g2[i] = g2_fit_i
             params[i] = popt
             params_err[i] = perr
@@ -456,7 +460,7 @@ class TTCAnalyzer:
             if ok and np.isfinite(tau_fit) and tau_fit > 0:
                 gamma[i] = 1.0 / tau_fit
                 gamma_err[i] = dtau_fit / (tau_fit ** 2) if np.isfinite(dtau_fit) else np.nan
-
+        
         # Helpful metadata bundle
         result = {
             # extracted (measured) curves
@@ -469,6 +473,8 @@ class TTCAnalyzer:
             "g2_fitted": fitted_g2,
             "fit_params": params,                    # columns: beta, A, tau, kww
             "fit_params_err": params_err,
+            "tau_fitted": tau_fit,             # fitted tau (µs)
+            "tau_fitted_err": dtau_fit,
             "gamma": gamma,                          # 1/tau_fit
             "gamma_err": gamma_err,
             "fit_success": fit_success,
