@@ -1,0 +1,203 @@
+{
+  "run_name": "ttc_AE_V1_PINN_fft",
+  "saved_at": "2026-01-22T06:41:54.545014",
+  "epoch": 5,
+  "loss_config": {
+    "lambda_recon": 3.0,
+    "lambda_1tcf": 0.0,
+    "lambda_symmetry": 3.0,
+    "lambda_siegert": 0.3,
+    "lambda_causality": 0.2,
+    "lambda_boundary": 0.0,
+    "lambda_smoothness": 0.05,
+    "lambda_baseline": 0.5,
+    "lambda_contrast": 0.5,
+    "lambda_fft": 0.3,
+    "fft_use_log": 1.0,
+    "fft_use_ttc_minus_one": 1.0,
+    "fft_r_min": 0.08,
+    "fft_r_max": 0.85,
+    "fft_eps": 1e-08,
+    "active_losses": [
+      "lambda_recon",
+      "lambda_symmetry",
+      "lambda_siegert",
+      "lambda_causality",
+      "lambda_smoothness",
+      "lambda_baseline",
+      "lambda_contrast",
+      "lambda_fft"
+    ]
+  },
+  "architecture_details": [
+    {
+      "index": 0,
+      "name": "pad10",
+      "class_name": "ZeroPadding2D",
+      "padding": [
+        [
+          10,
+          10
+        ],
+        [
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "index": 1,
+      "name": "crop_back",
+      "class_name": "CenterCrop"
+    },
+    {
+      "index": 2,
+      "name": "conv2d",
+      "class_name": "Conv2D",
+      "filters": 16,
+      "kernel_size": [
+        3,
+        7
+      ],
+      "strides": [
+        1,
+        1
+      ],
+      "padding": "same",
+      "activation": "relu",
+      "dilation_rate": [
+        1,
+        1
+      ],
+      "use_bias": true,
+      "groups": 1
+    },
+    {
+      "index": 3,
+      "name": "conv2d_1",
+      "class_name": "Conv2D",
+      "filters": 32,
+      "kernel_size": [
+        7,
+        3
+      ],
+      "strides": [
+        1,
+        1
+      ],
+      "padding": "same",
+      "activation": "relu",
+      "dilation_rate": [
+        1,
+        1
+      ],
+      "use_bias": true,
+      "groups": 1
+    },
+    {
+      "index": 4,
+      "name": "conv2d_2",
+      "class_name": "Conv2D",
+      "filters": 32,
+      "kernel_size": [
+        5,
+        5
+      ],
+      "strides": [
+        1,
+        1
+      ],
+      "padding": "same",
+      "activation": "relu",
+      "dilation_rate": [
+        1,
+        1
+      ],
+      "use_bias": true,
+      "groups": 1
+    },
+    {
+      "index": 5,
+      "name": "conv2d_transpose",
+      "class_name": "Conv2DTranspose",
+      "filters": 32,
+      "kernel_size": [
+        5,
+        5
+      ],
+      "strides": [
+        1,
+        1
+      ],
+      "padding": "same",
+      "activation": "relu",
+      "dilation_rate": [
+        1,
+        1
+      ],
+      "use_bias": true,
+      "groups": 1
+    },
+    {
+      "index": 6,
+      "name": "conv2d_transpose_1",
+      "class_name": "Conv2DTranspose",
+      "filters": 16,
+      "kernel_size": [
+        3,
+        3
+      ],
+      "strides": [
+        1,
+        1
+      ],
+      "padding": "same",
+      "activation": "relu",
+      "dilation_rate": [
+        1,
+        1
+      ],
+      "use_bias": true,
+      "groups": 1
+    },
+    {
+      "index": 7,
+      "name": "conv2d_3",
+      "class_name": "Conv2D",
+      "filters": 1,
+      "kernel_size": [
+        3,
+        3
+      ],
+      "strides": [
+        1,
+        1
+      ],
+      "padding": "same",
+      "activation": "linear",
+      "dilation_rate": [
+        1,
+        1
+      ],
+      "use_bias": true,
+      "groups": 1
+    }
+  ],
+  "train_loss": 0.3506649136543274,
+  "val_loss": 0.34872230887413025,
+  "loss_components_epoch": {
+    "reconstruction": 0.06737471371889114,
+    "1tcf": 0.006426053587347269,
+    "symmetry": 0.0006899143336340785,
+    "siegert": 0.29413464665412903,
+    "causality": 0.00939453486353159,
+    "boundary": 0.2662569582462311,
+    "smoothness": 0.001773269847035408,
+    "baseline": 0.005465565714985132,
+    "contrast": 0.04609312117099762,
+    "fft": 0.1016169935464859
+  },
+  "weights_file": "ttc_AE_V1_PINN_fft_epoch_5_20260122_064154.weights.h5",
+  "model_json_file": "ttc_AE_V1_PINN_fft_epoch_5_20260122_064154.model.json",
+  "training_dataset_name": ""
+}
