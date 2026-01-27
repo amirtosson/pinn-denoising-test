@@ -164,7 +164,7 @@ def main():
     # Settings
     # ---------------------------------------------
     t_bins = 100       # TTC size: 100 x 100
-    n_samples = 10   # number of synthetic TTCFs
+    n_samples = 5000   # number of synthetic TTCFs
     batch_size = 16
     epochs = 10
 
@@ -187,12 +187,13 @@ def main():
     noisy_data, target_data= preprocessor.create_training_pairs_v2(
         ttcf_list,
         noise_level=0.60,
+        dataset_name="dataset_negative_allowed_2101"
         #add_extra_gauss=False# extra noise level for training pairs
     )
     
     print(f"Training data shape (noisy):  {noisy_data.shape}")
     print(f"Training data shape (target): {target_data.shape}")
-    interactive_preview(noisy_data, target_data)
+    #interactive_preview(noisy_data, target_data)
 
 
     # ---------------------------------------------

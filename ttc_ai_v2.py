@@ -611,7 +611,7 @@ class XPCSPINNTrainer:
         return total_loss
     
     
-    def _save_checkpoint_bundle(self, epoch: int):
+    def _save_checkpoint_bundle(self, epoch: int, datasetname: str = ""):
         """
         Save weights + metadata bundle including model json and loss config.
         """
@@ -643,6 +643,7 @@ class XPCSPINNTrainer:
             "loss_components_epoch": {k: float(v.result().numpy()) for k, v in self.loss_components_tracker.items()},
             "weights_file": os.path.basename(weights_path),
             "model_json_file": os.path.basename(model_json_path),
+            "training_dataset_name": datasetname
         }
 
         with open(meta_json_path, "w", encoding="utf-8") as f:
@@ -654,7 +655,7 @@ class XPCSPINNTrainer:
         return weights_path, meta_json_path, model_json_path, summary_path
     
     
-    def train(self, train_dataset, val_dataset, epochs, save_freq=10, verbose=1):
+    def train(self, train_dataset, val_dataset, epochs, save_freq=10, verbose=1, datasetname=""):
         history = {
             "train_loss": [],
             "val_loss": [],
@@ -692,7 +693,7 @@ class XPCSPINNTrainer:
     
             # save bundle
             if (epoch + 1) % save_freq == 0:
-                w_path, meta_path, mj_path, sm_path = self._save_checkpoint_bundle(epoch + 1)
+                w_path, meta_path, mj_path, sm_path = self._save_checkpoint_bundle(epoch + 1, datasetname=datasetname)
                 if verbose >= 1:
                     print(f"Checkpoint bundle saved in: {self.checkpoint_dir}")
                     print(f"  weights: {w_path}")
@@ -908,7 +909,7 @@ class XPCSDataPreprocessor:
         target_array = np.array(target_list, dtype=np.float32)[..., np.newaxis]
         return noisy_array, target_array
     
-    def create_training_pairs_v2(self, ttcf_list, noise_level=0.1, num_noise=50):
+    def create_training_pairs_v2(self, ttcf_list, noise_level=0.1, num_noise=50, save_data= True, dataset_name= "training_dataset"):
         """
         Generate (noisy, target) training pairs from PURE normalized TTCFs.
         
@@ -948,7 +949,10 @@ class XPCSDataPreprocessor:
     
         noisy_array = np.array(noisy_list, dtype=np.float32)[..., np.newaxis]
         target_array = np.array(target_list, dtype=np.float32)[..., np.newaxis]
-    
+        if save_data:
+            np.save(f'./training_datasets/{dataset_name}_pure.npy', target_array)
+            np.save(f'./training_datasets/{dataset_name}_noisy.npy', noisy_array)
+
         return noisy_array, target_array
 
 def create_dataset(noisy_data, target_data, batch_size=8, shuffle=True):
